@@ -1,0 +1,599 @@
+
+
+```{r}
+#DEMO: RUN THESE TO SHOW CONNECTION WORKS
+
+
+#CONNECT TO MYSQL
+library(RMySQL)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+#show connection
+dbListTables(mydb)
+dbListFields(mydb, 'concerts')
+dbDisconnect(mydb)
+
+
+
+
+#CONNECT TO CYPHER
+library(neo4r)
+
+con <- neo4j_api$new(
+  url = "http://localhost:7474", 
+  user = "neo4j", 
+  password = "pw"
+)
+
+#show connection
+con$get_labels()
+con$get_relationships()
+
+
+
+#CONNECT TO MONGO
+library(mongolite)
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+rs <- dbSendQuery(mydb,"select * from songs;")
+songs=dbFetch(rs)
+
+my_collection = mongo(collection = "songs", db = "Spotify") 
+my_collection$insert(songs)
+
+#show connection
+my_collection$find()
+my_collection$count()
+my_collection$iterate()$one()
+length(my_collection$distinct("artist_name"))
+
+```
+
+
+
+```{r}
+#MYSQL QUERY - artist popularity by location
+
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+rs <- dbSendQuery(mydb, "select s.artist_name, u.user_location, (count(distinct l.userid))/ux.total as percent_users_that_listens_to_artist, 
+count(distinct s.track_id) as number_of_songs_by_artist_users_listened_to, 
+sum(l.number_of_listens) as total_times_listened
+from user_profile u, listens l, songs s, 
+(select user_location, count(*) as total from user_profile group by user_location) as ux
+where u.userid=l.userid and l.track_id=s.track_id and u.user_location=ux.user_location
+group by s.artist_name, u.user_location
+ORDER BY percent_users_that_listens_to_artist DESC, 
+number_of_songs_by_artist_users_listened_to DESC, 
+total_times_listened DESC;")
+
+
+dfa=dbFetch(rs)
+dbClearResult(rs)
+dbDisconnect(mydb)
+                                
+head(dfa)
+```
+
+
+```{r}
+#MYSQL QUERY - genre popularity by location
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+rs <- dbSendQuery(mydb, "select a.genre, u.user_location, (count(distinct l.userid))/ux.total as percent_users_that_listens_to_genre, 
+count(distinct s.artist_name) as number_of_artists_in_genre_users_listen_to, 
+sum(l.number_of_listens) as total_times_listened
+from user_profile u, listens l, songs s, artist_profile a,
+(select user_location, count(*) as total from user_profile group by user_location) as ux
+where u.userid=l.userid and l.track_id=s.track_id and s.artist_name=a.artist_name and u.user_location=ux.user_location
+group by genre, u.user_location
+ORDER BY percent_users_that_listens_to_genre DESC, 
+number_of_artists_in_genre_users_listen_to DESC, 
+total_times_listened DESC;")
+
+dfb=dbFetch(rs)
+dbClearResult(rs)
+dbDisconnect(mydb)
+
+head(dfb)
+```
+
+
+
+```{r}
+#MYSQL QUERY - artist popularity by genre
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+rs <- dbSendQuery(mydb, "select a.genre, a.artist_name, (((count(distinct l.userid))/8)*100) as percent_users_that_listens_to_artist,
+sum(l.number_of_listens) as total_times_listened
+from user_profile u, listens l, songs s, artist_profile a
+where u.userid=l.userid and l.track_id=s.track_id and s.artist_name=a.artist_name
+group by genre, artist_name
+order by percent_users_that_listens_to_artist DESC, total_times_listened DESC;")
+
+dfc=dbFetch(rs)
+dbClearResult(rs)
+dbDisconnect(mydb)
+
+head(dfc)
+```
+
+
+```{r}
+#MONGO QUERY - table of artists' average metrics using Aggregate
+
+
+dfm1=my_collection$aggregate('[{"$group":
+                        {"_id":"$artist_name", "count": {"$sum":1}, "avg_acousticness":{"$avg":"$acousticness"}, "avg_danceability":{"$avg":"$danceability"}, "avg_energy":{"$avg":"$energy"}, "avg_liveness":{"$avg":"$liveness"}, "avg_loudness":{"$avg":"$loudness"}, "avg_speechiness":{"$avg":"$speechiness"}, "avg_valence":{"$avg":"$valence"}}}]')
+
+
+colnames(dfm1)=c("artist", "count", "avg_acousticness", "avg_danceability", "avg_energy", "avg_liveness", "avg_loudness", "avg_speechiness", "avg_valence")
+
+
+head(dfm1)
+```
+
+
+
+```{r} 
+#MONGO QUERY - Find supporting artists who have specific metrics
+
+dfm1[,3:9]=round(dfm1[,3:9], 0)
+my_collection2 = mongo(collection = "average_metrics", db = "Spotify") 
+my_collection2$drop()
+my_collection2$insert(dfm1)
+
+my_collection2$find('{"avg_acousticness":1,"avg_danceability":0, "avg_energy":0, "avg_liveness":0, "avg_loudness":-15, "avg_speechiness":0, "avg_valence":0}', fields = '{"_id":1, "artist_name":1}')
+
+```
+
+
+
+```{r}
+#MYSQL QUERY - upcoming concerts
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+
+rs <- dbSendQuery(mydb, "select * 
+from concerts c where c.show_status='upcoming' ;")
+
+dfd=dbFetch(rs)
+dbClearResult(rs)
+dbDisconnect(mydb)
+
+dfd
+```
+
+
+```{r}
+#MYSQL QUERY - users to advertise concert to 
+
+mydb <- dbConnect(MySQL(), user = 'testuser', password = 'pw',
+                  dbname = 'spotify', host = '127.0.0.1')
+
+rs <- dbSendQuery(mydb, "select * from advertiseto;")
+
+dfe=dbFetch(rs)
+dbClearResult(rs)
+dbDisconnect(mydb)
+
+dfe
+```
+
+
+
+```{r}
+#CYPHER QUERY - user's genre listens
+
+dff=as.data.frame('MATCH (u:user)-[rel:ListensTo]->(s:songs)-[pel:Plays]->(g:genre) WITH u.user_location as user_location,g.genre_id as genre_id, u.userid as userid, sum(rel.total_listens) as total_listens
+WHERE total_listens>100
+RETURN genre_id, userid, total_listens
+ORDER BY userid, total_listens  DESC;' %>%
+  call_neo4j(con))
+colnames(dff)=c("genre", "userid", "total_times_listened_above_100")
+
+head(dff)
+```
+
+
+```{r}
+
+#CYPHER QUERY - specific user's nodes plot
+library(purrr)
+library(dplyr)
+library(visNetwork)
+
+G="MATCH p=(u:user{userid:'bd93'})-[r:ListensTo]->()
+Return p;"%>% 
+  call_neo4j(con, type = "graph")  
+
+
+G$nodes <- G$nodes %>%
+  unnest_nodes(what = "properties")
+head(G$nodes)
+
+G$relationships <- G$relationships %>%
+  unnest_relationships() %>%
+  select(from = startNode, to = endNode, label = type)
+head(G$relationships)
+
+
+visNetwork::visNetwork(G$nodes, G$relationships)
+
+```
+
+
+```{r}
+
+#CYPHER QUERY - Number of songs listed
+ga=as.data.frame('MATCH (n:songs) RETURN count(*) AS number_songs;'%>%
+  call_neo4j(con))
+colnames(ga)=c("Number of songs in library")
+
+
+#CYPHER QUERY - Number of users
+gb=as.data.frame('MATCH (n:user) RETURN count(*) AS number_users;'%>%
+  call_neo4j(con))
+colnames(gb)=c("Number of users in library")
+
+
+#CYPHER QUERY - Number of artists
+gc=as.data.frame('MATCH (n:songs) RETURN count(distinct(n.artist_name)) AS number_artists;'%>%
+  call_neo4j(con))
+colnames(gc)=c("Number of artists in library")
+
+#CYPHER QUERY - Number of genres
+gd=as.data.frame('MATCH (n:genre) RETURN count(n.genre_id) AS number_genres;'%>%
+  call_neo4j(con))
+colnames(gd)=c("Number of genres in library")
+
+
+#CYHER QUERY - genres noone likes
+ge=as.data.frame('MATCH (g:genre)
+WHERE NOT ((:user)-[:ListensTo]->(:songs)-[:Plays]->(g))
+RETURN distinct(g.genre_id);'%>%
+  call_neo4j(con))
+colnames(ge)=c("Genres no-one likes")
+
+
+#CYPHER QUERY - genres everyone likes
+gf=as.data.frame('MATCH (u:user)-[rel:ListensTo]->(s:songs)-[pel:Plays]->(g:genre) 
+WITH g.genre_id as genre_a, count(distinct(u.userid)) as number_of_users
+WHERE number_of_users=8
+RETURN genre_a;'%>%
+  call_neo4j(con))
+colnames(gf)=c("Genres everyone likes")
+
+
+#artist everyone likes
+gg=as.data.frame('MATCH (u:user)-[rel:ListensTo]->(s:songs) 
+WITH s.artist_name as artist, count(distinct(u.userid)) as number_of_users
+WHERE number_of_users=8
+RETURN artist;'%>%
+  call_neo4j(con))
+
+gg[1,1]="NA"
+colnames(gg)=c("Artists everyone likes")
+
+```
+
+
+
+```{r}
+#R FILTERS FOR PLOTS 
+dfaf=dplyr::filter(dfa,percent_users_that_listens_to_artist== 1)
+dfaf=dplyr::filter(dfaf,user_location== "MA")
+
+
+dfbf=dplyr::filter(dfb,percent_users_that_listens_to_genre== 1)
+dfbf=dplyr::filter(dfbf,user_location== "MA")
+
+
+dfcf=dplyr::filter(dfc,genre=="art-pop")
+ 
+ 
+  
+dfff=dplyr::filter(dff,userid=="bd93")
+dfff$portion=(dfff$total_times_listened/sum(dfff$total_times_listened))*100 
+
+library(viridis)
+
+
+```
+
+
+
+#We can take the items from the different database softwares and use them together to develop a front end decision making tool to be used by the manager
+
+```{r}
+#R SHINY INTERFACE
+library(shiny)
+library(shinyWidgets)
+
+ui = fluidPage(
+  headerPanel("Spotify"),
+  
+   tabsetPanel(type = "tabs",
+               
+               
+               tabPanel("metrics(cypher)", #page 0
+               
+               splitLayout(
+    style = "border: 1px solid silver;",
+    cellWidths = 250,
+    cellArgs = list(style = "padding: 6px"),
+    tableOutput("ga"),
+    tableOutput("gb"),
+    tableOutput("gc"),
+    tableOutput("gd"),
+    tableOutput("ge"),
+    tableOutput("gf"),
+    tableOutput("gg"))),
+
+    
+               tabPanel("artist(mysql)", #page 1
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters",inline = FALSE,params = list(
+        user_location = list(inputId = "user_location", title = "Select location", placeholder = 'select'),
+        percent_users_that_listens_to_artist = list(inputId = "percent_users_that_listens_to_artist", title = "Select percent users", placeholder = 'select')
+        )
+      )
+    ),
+  
+  mainPanel(
+    h1("Artist Popularity By Location"),
+    tableOutput("table"),
+    plotOutput("data")
+    )
+  )),
+  
+  
+  tabPanel("genre(mysql)", #page 2
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters2",inline = FALSE,params = list(
+        user_location = list(inputId = "user_location", title = "Select location", placeholder = 'select'),
+        percent_users_that_listens_to_genre = list(inputId = "percent_users_that_listens_to_genre", title = "Select percent users", placeholder = 'select')
+        )
+      )
+    ),
+  
+  mainPanel(
+    h1("Genre Popularity By Location"),
+    tableOutput("table2"),
+    plotOutput("data2")
+    )
+  )),
+  
+   tabPanel("artist by genre(mysql)", #page 3
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters3",inline = FALSE,params = list(
+        genre = list(inputId = "genre", title = "Select genre", placeholder = 'select')
+        )
+      )
+    ),
+  
+  mainPanel(
+    h1("Artist Popularity By Genre"),
+    tableOutput("table3"),
+    plotOutput("data3")
+    )
+  )),
+  
+
+  tabPanel("artist(mongo)", #page 3.2
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters12",inline = FALSE,params = list(
+        artist = list(inputId = "artist", title = "Select artist", placeholder = 'select')
+        )
+      ),
+        selectizeGroupUI(
+      id = "my-filters13",inline = FALSE,params = list(
+        avg_acousticness = list(inputId = "avg_acousticness", title = "Select acousticness", placeholder = 'select'),
+        avg_danceability = list(inputId = "avg_danceability", title = "Select danceability", placeholder = 'select'),
+        avg_energy = list(inputId = "avg_energy", title = "Select energy", placeholder = 'select'),
+        avg_liveness = list(inputId = "avg_liveness", title = "Select liveness", placeholder = 'select'),
+        avg_loudness = list(inputId = "avg_loudness", title = "Select loudness", placeholder = 'select'),
+        avg_speechiness = list(inputId = "avg_speechiness", title = "Select speechiness", placeholder = 'select'),
+        avg_valence = list(inputId = "avg_valence", title = "Select valence", placeholder = 'select')
+        )
+      )
+    ),
+  
+  
+  mainPanel(
+    h1("Main Performing Artist"),
+    tableOutput("table12"),
+    h1("Supporting Artists"),
+    tableOutput("table13")
+    )
+  )),
+  
+  
+    tabPanel("concerts(mysql)", #page 4
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters4",inline = FALSE,params = list(
+        concertid = list(inputId = "concertid", title = "Select concertid", placeholder = 'select')
+        )
+      )
+    ),
+  
+  mainPanel(
+    h1("Upcoming Concerts"),
+    tableOutput("table4"),
+    h1("Users to Advertise Concert To"),
+    tableOutput("table5")
+    )
+  )),
+  
+  
+  
+      tabPanel("user profile(cypher)", #page 5
+               
+               sidebarLayout(
+    
+  sidebarPanel(
+    selectizeGroupUI(
+      id = "my-filters5",inline = FALSE,params = list(
+        concertid = list(inputId = "userid", title = "Select userid", placeholder = 'select')
+        )
+      )
+    ),
+  
+  mainPanel(
+    h1("Listening Habits By User"),
+    tableOutput("table6"),
+    plotOutput("data4")
+    )
+  ))
+  
+  
+  
+  ))
+
+
+
+server = function(input, output, session) {
+  res_mod <- callModule(
+    module = selectizeGroupServer,id = "my-filters",data = dfa,
+    vars = c("user_location", "percent_users_that_listens_to_artist")   #page 1
+    )
+  
+    res_mod1_2 <- callModule(
+    module = selectizeGroupServer,id = "my-filters12",data = dfm1,
+    vars = c("artist")   #page 1.2
+    )
+    
+        res_mod1_3 <- callModule(
+    module = selectizeGroupServer,id = "my-filters13",data = dfm1,
+    vars = c("avg_acousticness", "avg_danceability", "avg_energy", "avg_liveness", "avg_loudness", "avg_speechiness", "avg_valence")   #page 1.3
+    )
+    
+  res_mod2 <- callModule(
+    module = selectizeGroupServer,id = "my-filters2",data = dfb,
+    vars = c("user_location", "percent_users_that_listens_to_genre")   #page 2
+    )
+  
+  
+  res_mod3 <- callModule(
+    module = selectizeGroupServer,id = "my-filters3",data = dfc,   #page 3
+    vars = c("genre")
+    )
+  
+  
+   res_mod4 <- callModule(
+    module = selectizeGroupServer,id = "my-filters4",data = dfd,   #page 4
+    vars = c("concertid")
+    )
+   
+    res_mod5 <- callModule(
+    module = selectizeGroupServer,id = "my-filters4",data = dfe,   #page 4
+    vars = c("concertid")
+    )
+   
+    res_mod6 <- callModule(
+    module = selectizeGroupServer,id = "my-filters5",data = dff,   #page 5
+    vars = c("userid")
+    )
+        
+    
+    #page 0
+    output$ga=renderTable(ga)
+    output$gb=renderTable(gb)
+    output$gc=renderTable(gc)
+    output$gd=renderTable(gd)
+    output$ge=renderTable(ge)
+    output$gf=renderTable(gf)
+    output$gg=renderTable(gg)
+  
+    
+   #page 1
+  output$table <- renderTable({
+    res_mod()})
+  
+  
+  output$data <- renderPlot({
+    ggplot(data=dfaf, aes(x=reorder(artist_name,total_times_listened), y=total_times_listened))+geom_bar(stat="identity", position=position_dodge(), fill='seagreen')+ ggtitle("Artist popularity in location")+labs(x="Artist Name", y="Total times listened")+geom_text(aes(label=total_times_listened), angle = 0, hjust=1.5, vjust=0.25, color="white",position = position_dodge(0.9), size=3.0)+coord_flip()})
+  
+  
+     #page 1.2
+  output$table12 <- renderTable({
+    res_mod1_2()})
+  
+    output$table13 <- renderTable({
+    res_mod1_3()})
+  
+  #page 2
+  output$table2=renderTable({res_mod2()})
+  
+  output$data2 <- renderPlot({
+    ggplot(dfbf, aes(x=user_location,y=genre ,fill=total_times_listened)) +geom_tile(state="identity")+
+  ggtitle("Genre popularity in location")+scale_fill_distiller(palette ="Greens", direction = 1)+labs(x="location", y="genre")})
+  
+  
+  #page 3
+  output$table3=renderTable({res_mod3()})
+  
+  output$data3 <- renderPlot({
+    ggplot(data=dfcf, aes(x=reorder(artist_name,total_times_listened), y=total_times_listened)) +
+  geom_bar(stat="identity", position=position_dodge(), fill='seagreen')+coord_polar(start = 0)+ylim(-100,1500)+
+  ggtitle("Artist popularity by genre")+ labs(y="Total times listened in one year", x="Artist")})
+  
+  
+  #page 4
+  output$table4=renderTable({res_mod4()})
+  
+  output$table5=renderTable({res_mod5()})
+  
+  
+  #page 5
+  output$table6=renderTable({res_mod6()})
+  
+  output$data4= renderPlot({
+    ggplot(dfff, aes(x="", y=portion, fill=genre))+
+  geom_bar(width = 1, stat = "identity")+coord_polar("y", start=0)+
+  ggtitle("User's genre listens")+scale_fill_viridis(discrete=TRUE)})
+  
+}
+
+
+
+shinyApp(ui = ui, server = server)
+
+
+
+```
+
